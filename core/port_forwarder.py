@@ -41,7 +41,7 @@ class PortForwarder:
         try:
             self.thread = threading.Thread(target=self._run_async_loop, daemon=True)
             self.thread.start()
-            time.sleep(1.0)
+            time.sleep(0.8)
             self._is_active = True
             return True
         except Exception as e:
@@ -54,13 +54,14 @@ class PortForwarder:
         asyncio.set_event_loop(self.loop)
 
         try:
-            self.wda_forwarder = UsbmuxTcpForwarder(self.udid, self.wda_port, self.remote_wda_port)
-            self.mjpeg_forwarder = UsbmuxTcpForwarder(self.udid, self.mjpeg_port, self.remote_mjpeg_port)
+            # Correct signature: (serial, dst_port, src_port)
+            self.wda_forwarder = UsbmuxTcpForwarder(self.udid, dst_port=self.remote_wda_port, src_port=self.wda_port)
+            self.mjpeg_forwarder = UsbmuxTcpForwarder(self.udid, dst_port=self.remote_mjpeg_port, src_port=self.mjpeg_port)
 
             self.loop.create_task(self.wda_forwarder.start())
             self.loop.create_task(self.mjpeg_forwarder.start())
 
-            logger.info(f"Native TCP forwarders running on local ports {self.wda_port} and {self.mjpeg_port}")
+            logger.info(f"Native TCP forwarders active: PC:{self.wda_port}->iOS:{self.remote_wda_port} and PC:{self.mjpeg_port}->iOS:{self.remote_mjpeg_port}")
             self.loop.run_forever()
         except Exception as e:
             logger.error(f"Forwarder loop error: {e}")

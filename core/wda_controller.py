@@ -1,4 +1,5 @@
 import logging
+import time
 import requests
 import wda
 from typing import Optional, Tuple
@@ -18,28 +19,31 @@ class WDAController:
         self.device_height = 0
         self.is_connected = False
 
-    def connect(self) -> bool:
-        """Connects to WebDriverAgent running on iOS device."""
-        try:
-            logger.info(f"Connecting WDA client at {self.wda_url}")
-            self.client = wda.Client(self.wda_url)
-            
-            # Check status
-            status = self.client.status()
-            logger.info(f"WDA Status: {status}")
-            
-            # Fetch device screen size
-            window_size = self.client.window_size()
-            self.device_width = window_size.width
-            self.device_height = window_size.height
-            logger.info(f"Device Screen Resolution: {self.device_width}x{self.device_height}")
+    def connect(self, retries: int = 5, delay: float = 1.0) -> bool:
+        """Connects to WebDriverAgent running on iOS device with retries."""
+        for attempt in range(retries):
+            try:
+                logger.info(f"Connecting WDA client at {self.wda_url} (attempt {attempt+1}/{retries})...")
+                self.client = wda.Client(self.wda_url)
+                
+                # Check status
+                status = self.client.status()
+                logger.info(f"WDA Status: {status}")
+                
+                # Fetch device screen size
+                window_size = self.client.window_size()
+                self.device_width = window_size.width
+                self.device_height = window_size.height
+                logger.info(f"Device Screen Resolution: {self.device_width}x{self.device_height}")
 
-            self.is_connected = True
-            return True
-        except Exception as e:
-            logger.error(f"Failed connecting to WDA at {self.wda_url}: {e}")
-            self.is_connected = False
-            return False
+                self.is_connected = True
+                return True
+            except Exception as e:
+                logger.warning(f"WDA connect attempt {attempt+1} failed at {self.wda_url}: {e}")
+                time.sleep(delay)
+
+        self.is_connected = False
+        return False
 
     def tap(self, x: int, y: int) -> bool:
         """Performs single tap at iOS screen coordinates (x, y)."""

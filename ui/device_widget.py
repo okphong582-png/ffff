@@ -1,11 +1,15 @@
 import time
 import logging
-from PySide6.QtCore import Qt, QRect, QPoint, Signal
+import win32gui
+import win32api
+import win32con
+import pyautogui
+from PySide6.QtCore import Qt, QPoint
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
-    QLineEdit, QFrame, QSizePolicy, QMessageBox
+    QLineEdit, QFrame, QSizePolicy
 )
-from PySide6.QtGui import QImage, QPixmap, QPainter, QMouseEvent, QKeyEvent
+from PySide6.QtGui import QImage, QPixmap, QMouseEvent, QKeyEvent
 
 from core.port_forwarder import PortForwarder
 from core.stream_receiver import StreamReceiverThread
@@ -16,7 +20,8 @@ logger = logging.getLogger("DeviceWidget")
 class ScreenCanvas(QLabel):
     """
     Interactive QLabel screen canvas.
-    Displays live iOS screen frame and handles mouse click, drag-to-swipe, and key events.
+    Displays live iOS screen frame (from 3uTools HD Mirror Engine or WDA stream)
+    and translates mouse clicks/drags directly to screen!
     """
     def __init__(self, controller: WDAController, parent=None):
         super().__init__(parent)
@@ -27,8 +32,8 @@ class ScreenCanvas(QLabel):
         self.setStyleSheet("background-color: #000000; border-radius: 6px;")
 
         self.current_qimage: QImage = None
-        self.ios_screen_w = 375  # Default baseline width
-        self.ios_screen_h = 812  # Default baseline height
+        self.ios_screen_w = 375
+        self.ios_screen_h = 812
         
         self.press_start_pos: QPoint = None
         self.press_start_time: float = 0.0
@@ -40,7 +45,6 @@ class ScreenCanvas(QLabel):
             self.ios_screen_w = w
             self.ios_screen_h = h
         
-        # Scale pixmap preserving aspect ratio
         pixmap = QPixmap.fromImage(q_img)
         scaled_pixmap = pixmap.scaled(self.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
         self.setPixmap(scaled_pixmap)
@@ -56,39 +60,83 @@ class ScreenCanvas(QLabel):
             end_pos = event.position().toPoint()
             duration = time.time() - self.press_start_time
             
-            # Map canvas coordinates to iOS native screen coordinates
-            start_ios = self._map_to_ios_coords(self.press_start_pos)
-            end_ios = self._map_to_ios_coords(end_pos)
+            dx = abs(end_pos.x() - self.press_start_pos.x())
+            dy = abs(end_pos.y() - self.press_start_pos.y())
 
-            if start_ios and end_ios:
-                dx = abs(end_pos.x() - self.press_start_pos.x())
-                dy = abs(end_pos.y() - self.press_start_pos.y())
-
-                # If movement is small, treat as Click/Tap
-                if dx < 10 and dy < 10:
-                    logger.info(f"Click -> Tap at iOS ({start_ios[0]}, {start_ios[1]})")
-                    self.controller.tap(start_ios[0], start_ios[1])
-                else:
-                    # Treat as Drag/Swipe
-                    logger.info(f"Drag -> Swipe from {start_ios} to {end_ios} (duration={duration:.2f}s)")
-                    self.controller.swipe(start_ios[0], start_ios[1], end_ios[0], end_ios[1], duration=max(0.2, min(1.5, duration)))
+            # Attempt 1: Try WDA tap/swipe if WDA is connected
+            if self.controller and self.controller.is_connected:
+                start_ios = self._map_to_ios_coords(self.press_start_pos)
+                end_ios = self._map_to_ios_coords(end_pos)
+                if start_ios and end_ios:
+                    if dx < 10 and dy < 10:
+                        self.controller.tap(start_ios[0], start_ios[1])
+                    else:
+                        self.controller.swipe(start_ios[0], start_ios[1], end_ios[0], end_ios[1], duration=max(0.2, min(1.5, duration)))
+            else:
+                # Attempt 2: Dispatch mouse click/drag to 3uTools Real-time Screen Window
+                self._dispatch_to_3utools_window(self.press_start_pos, end_pos, is_click=(dx < 10 and dy < 10))
 
             self.press_start_pos = None
         super().mouseReleaseEvent(event)
 
+    def _dispatch_to_3utools_window(self, start_pt: QPoint, end_pt: QPoint, is_click: bool):
+        """Dispatches mouse click or drag to 3uTools Real-time Screen window."""
+        hwnd = self._find_3utools_window()
+        if not hwnd:
+            return
+
+        rect = win32gui.GetWindowRect(hwnd)
+        win_w = rect[2] - rect[0]
+        win_h = rect[3] - rect[1]
+
+        if not self.pixmap() or self.pixmap().isNull():
+            return
+
+        pm_w = self.pixmap().width()
+        pm_h = self.pixmap().height()
+        lbl_w = self.width()
+        lbl_h = self.height()
+
+        offset_x = (lbl_w - pm_w) // 2
+        offset_y = (lbl_h - pm_h) // 2
+
+        rel_x = start_pt.x() - offset_x
+        rel_y = start_pt.y() - offset_y
+
+        if 0 <= rel_x <= pm_w and 0 <= rel_y <= pm_h:
+            target_x = rect[0] + int((rel_x / pm_w) * win_w)
+            target_y = rect[1] + int((rel_y / pm_h) * win_h)
+
+            if is_click:
+                pyautogui.click(target_x, target_y)
+            else:
+                end_rel_x = end_pt.x() - offset_x
+                end_rel_y = end_pt.y() - offset_y
+                end_target_x = rect[0] + int((end_rel_x / pm_w) * win_w)
+                end_target_y = rect[1] + int((end_rel_y / pm_h) * win_h)
+                pyautogui.moveTo(target_x, target_y)
+                pyautogui.dragTo(end_target_x, end_target_y, duration=0.3, button='left')
+
+    def _find_3utools_window(self):
+        hwnd = None
+        def enum_cb(h, _):
+            nonlocal hwnd
+            txt = win32gui.GetWindowText(h)
+            if "real-time screen" in txt.lower() or "3uairplayer" in txt.lower():
+                hwnd = h
+        win32gui.EnumWindows(enum_cb, None)
+        return hwnd
+
     def keyPressEvent(self, event: QKeyEvent):
         text = event.text()
         if text and text.isprintable():
-            logger.info(f"PC Keyboard -> Type text '{text}' into iOS")
-            self.controller.type_text(text)
-        elif event.key() == Qt.Key_Backspace:
-            self.controller.type_text("\b")
-        elif event.key() == Qt.Key_Return:
-            self.controller.type_text("\n")
+            if self.controller and self.controller.is_connected:
+                self.controller.type_text(text)
+            else:
+                pyautogui.write(text)
         super().keyPressEvent(event)
 
     def _map_to_ios_coords(self, pt: QPoint):
-        """Converts canvas widget relative (x, y) to iOS native pixel coordinates."""
         if not self.pixmap() or self.pixmap().isNull():
             return None
 
@@ -97,7 +145,6 @@ class ScreenCanvas(QLabel):
         lbl_w = self.width()
         lbl_h = self.height()
 
-        # Pixmap centered offset
         offset_x = (lbl_w - pm_w) // 2
         offset_y = (lbl_h - pm_h) // 2
 
@@ -121,9 +168,9 @@ class ScreenCanvas(QLabel):
 class DeviceWidget(QFrame):
     """
     Card Container for a single connected iPhone.
-    Combines Device Header Info, Interactive Screen Canvas, and Control Toolbar.
+    Displays Live Stream (3uTools HD Mirror / WDA) & Control Bar.
     """
-    def __init__(self, udid: str, device_name: str = "iPhone", wda_port: int = 8100, mjpeg_port: int = 9100, parent=None):
+    def __init__(self, udid: str, device_name: str = "iPhone", wda_port: int = 8200, mjpeg_port: int = 9200, parent=None):
         super().__init__(parent)
         self.udid = udid
         self.device_name = device_name
@@ -132,7 +179,6 @@ class DeviceWidget(QFrame):
 
         self.setObjectName("device_card")
 
-        # Core components
         self.forwarder = PortForwarder(udid, wda_port, mjpeg_port)
         self.controller = WDAController(f"http://localhost:{wda_port}")
         self.stream_thread = StreamReceiverThread(
@@ -147,12 +193,11 @@ class DeviceWidget(QFrame):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(10, 10, 10, 10)
 
-        # Header Info Bar
         header = QHBoxLayout()
         self.lbl_title = QLabel(f"📱 {self.device_name}")
         self.lbl_title.setStyleSheet("font-weight: bold; font-size: 14px;")
         
-        self.lbl_status = QLabel("Offline")
+        self.lbl_status = QLabel("Đang quét màn hình...")
         self.lbl_status.setObjectName("status_label")
 
         self.lbl_fps = QLabel("FPS: 0")
@@ -164,12 +209,10 @@ class DeviceWidget(QFrame):
         header.addWidget(self.lbl_status)
         layout.addLayout(header)
 
-        # Interactive Canvas Screen
         self.canvas = ScreenCanvas(self.controller)
         self.canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         layout.addWidget(self.canvas)
 
-        # Quick Control Toolbar
         toolbar = QHBoxLayout()
         toolbar.setSpacing(6)
 
@@ -182,20 +225,11 @@ class DeviceWidget(QFrame):
         btn_lock = QPushButton("🔒 Power")
         btn_lock.clicked.connect(self.on_click_lock)
 
-        btn_vol_up = QPushButton("🔊 +")
-        btn_vol_up.clicked.connect(lambda: self.controller.volume_up())
-
-        btn_vol_down = QPushButton("🔉 -")
-        btn_vol_down.clicked.connect(lambda: self.controller.volume_down())
-
         toolbar.addWidget(btn_home)
         toolbar.addWidget(btn_appswitcher)
         toolbar.addWidget(btn_lock)
-        toolbar.addWidget(btn_vol_up)
-        toolbar.addWidget(btn_vol_down)
         layout.addLayout(toolbar)
 
-        # Text input row
         input_row = QHBoxLayout()
         self.txt_input = QLineEdit()
         self.txt_input.setPlaceholderText("Gõ chữ để gửi sang iPhone...")
@@ -210,41 +244,45 @@ class DeviceWidget(QFrame):
         layout.addLayout(input_row)
 
     def start_device(self):
-        """Starts port forwarding, connects WDA API, and starts video stream thread."""
-        self.lbl_status.setText("Đang kết nối USB...")
-        
-        # 1. Forward USB ports
+        """Starts stream thread and control bridge."""
+        self.lbl_status.setText("Luồng HD Sẵn sàng")
+
+        # 1. Forward USB ports in background
         self.forwarder.start_forwarding()
 
-        # 2. Connect WDA Controller
-        if self.controller.connect():
-            self.lbl_status.setText("WDA Sẵn sàng")
-        else:
-            self.lbl_status.setText("Chờ WDA...")
+        # 2. Try WDA connection
+        self.controller.connect(retries=2, delay=0.5)
 
-        # 3. Connect Stream Thread
+        # 3. Connect Stream Thread (3uTools HD Mirror / WDA)
         self.stream_thread.frame_ready.connect(self.canvas.update_frame)
         self.stream_thread.fps_updated.connect(lambda fps: self.lbl_fps.setText(f"FPS: {fps:.1f}"))
         self.stream_thread.connection_lost.connect(lambda err: self.lbl_status.setText(f"Lỗi luồng: {err}"))
         self.stream_thread.start()
 
     def stop_device(self):
-        """Clean up threads and port forwarders on device disconnect."""
         self.stream_thread.stop()
         self.stream_thread.wait(1000)
         self.forwarder.stop_forwarding()
 
     def on_click_home(self):
-        self.controller.press_home()
+        if self.controller and self.controller.is_connected:
+            self.controller.press_home()
+        else:
+            pyautogui.press('win')
 
     def on_click_appswitcher(self):
-        self.controller.press_app_switcher()
+        if self.controller and self.controller.is_connected:
+            self.controller.press_app_switcher()
 
     def on_click_lock(self):
-        self.controller.lock_screen()
+        if self.controller and self.controller.is_connected:
+            self.controller.lock_screen()
 
     def on_send_text(self):
         text = self.txt_input.text()
         if text:
-            self.controller.type_text(text)
+            if self.controller and self.controller.is_connected:
+                self.controller.type_text(text)
+            else:
+                pyautogui.write(text)
             self.txt_input.clear()

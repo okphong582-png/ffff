@@ -1,0 +1,63 @@
+name: Build iOS WebDriverAgent IPA
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+jobs:
+  build-ipa:
+    name: Build WebDriverAgent.ipa (iOS Remote Control)
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Select latest Xcode version
+        run: |
+          sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+          xcodebuild -version
+
+      - name: Clone Official Appium WebDriverAgent
+        run: |
+          git clone https://github.com/appium/WebDriverAgent.git WDA_Source
+          cd WDA_Source
+
+      - name: Build WebDriverAgentRunner (No Code Sign for IPA packaging)
+        run: |
+          cd WDA_Source
+          xcodebuild build-for-testing \
+            -project WebDriverAgent.xcodeproj \
+            -scheme WebDriverAgentRunner \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build_output \
+            CODE_SIGN_ONLY=NO \
+            CODE_SIGNING_ALLOWED=NO
+
+      - name: Package WebDriverAgentRunner.app into IPA
+        run: |
+          cd WDA_Source
+          mkdir -p Payload
+          
+          # Find compiled Runner app
+          APP_PATH=$(find build_output -name "WebDriverAgentRunner-Runner.app" | head -n 1)
+          echo "Found compiled app at: $APP_PATH"
+          
+          if [ -z "$APP_PATH" ]; then
+            echo "Error: Could not find compiled .app file!"
+            exit 1
+          fi
+
+          cp -r "$APP_PATH" Payload/
+          zip -r WebDriverAgentRunner.ipa Payload
+          echo "Successfully created WebDriverAgentRunner.ipa"
+
+      - name: Upload IPA Artifact to GitHub
+        uses: actions/upload-artifact@v4
+        with:
+          name: WebDriverAgentRunner-iOS-Control-IPA
+          path: WDA_Source/WebDriverAgentRunner.ipa
+          retention-days: 30

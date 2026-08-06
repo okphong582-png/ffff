@@ -99,11 +99,11 @@ class StreamReceiverThread(QThread):
                     left_crop = int(w * 0.02)  # Crop left border
                     right_crop = int(w * 0.98) # Crop right border
                     
-                    cropped_frame = frame_rgb[top_crop:bot_crop, left_crop:right_crop]
-                    ch_h, ch_w, _ = cropped_frame.shape
+                    cropped = np.ascontiguousarray(frame_rgb[top_crop:bot_crop, left_crop:right_crop])
+                    ch_h, ch_w, _ = cropped.shape
                     
                     bytes_per_line = 3 * ch_w
-                    q_img = QImage(cropped_frame.data, ch_w, ch_h, bytes_per_line, QImage.Format_RGB888).copy()
+                    q_img = QImage(cropped.data, ch_w, ch_h, bytes_per_line, QImage.Format_RGB888).copy()
                     self.frame_ready.emit(q_img, ch_w, ch_h)
                 else:
                     bytes_per_line = 3 * w

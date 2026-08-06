@@ -4,6 +4,10 @@ import win32gui
 import win32api
 import win32con
 import pyautogui
+
+# Disable PyAutoGUI fail-safe to prevent corner cursor exceptions
+pyautogui.FAILSAFE = False
+pyautogui.PAUSE = 0.01
 from PySide6.QtCore import Qt, QPoint
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,

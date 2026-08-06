@@ -12,7 +12,6 @@ from PySide6.QtGui import QImage
 
 logger = logging.getLogger("StreamReceiver")
 
-# PW_RENDERFULLCONTENT flag for PrintWindow
 PW_RENDERFULLCONTENT = 2
 
 class StreamReceiverThread(QThread):
@@ -52,7 +51,6 @@ class StreamReceiverThread(QThread):
 
         logger.info(f"Found 3uTools Real-time Screen window handle: HWND {hwnd}")
         
-        # Ensure window is restored if minimized
         if win32gui.IsIconic(hwnd):
             win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
 
@@ -77,7 +75,6 @@ class StreamReceiverThread(QThread):
                 saveBitMap.CreateCompatibleBitmap(mfcDC, w, h)
                 saveDC.SelectObject(saveBitMap)
 
-                # Use ctypes PrintWindow (works on all Windows versions)
                 result = ctypes.windll.user32.PrintWindow(hwnd, saveDC.GetSafeHdc(), PW_RENDERFULLCONTENT)
                 if not result:
                     saveDC.BitBlt((0, 0), (w, h), mfcDC, (0, 0), win32con.SRCCOPY)
@@ -94,10 +91,24 @@ class StreamReceiverThread(QThread):
                 # Convert BGRA to RGB
                 frame_rgb = cv2.cvtColor(img, cv2.COLOR_BGRA2RGB)
 
-                # Emit frame to UI
-                bytes_per_line = 3 * w
-                q_img = QImage(frame_rgb.data, w, h, bytes_per_line, QImage.Format_RGB888).copy()
-                self.frame_ready.emit(q_img, w, h)
+                # Smart Crop: If frame contains titlebar/borders, crop inner video region
+                # Titlebar is top ~40px, bottom toolbar is ~40px, side borders ~5px
+                if h > 100 and w > 100:
+                    top_crop = int(h * 0.08)   # Crop title bar
+                    bot_crop = int(h * 0.92)   # Crop bottom status bar
+                    left_crop = int(w * 0.02)  # Crop left border
+                    right_crop = int(w * 0.98) # Crop right border
+                    
+                    cropped_frame = frame_rgb[top_crop:bot_crop, left_crop:right_crop]
+                    ch_h, ch_w, _ = cropped_frame.shape
+                    
+                    bytes_per_line = 3 * ch_w
+                    q_img = QImage(cropped_frame.data, ch_w, ch_h, bytes_per_line, QImage.Format_RGB888).copy()
+                    self.frame_ready.emit(q_img, ch_w, ch_h)
+                else:
+                    bytes_per_line = 3 * w
+                    q_img = QImage(frame_rgb.data, w, h, bytes_per_line, QImage.Format_RGB888).copy()
+                    self.frame_ready.emit(q_img, w, h)
 
                 frame_count += 1
                 now = time.time()
@@ -118,19 +129,50 @@ class StreamReceiverThread(QThread):
         return True
 
     def _find_3utools_window(self):
-        hwnd = None
-        keywords = ["real-time screen", "3uairplayer", "3utools", "iphone", "idevice", "screen"]
+        best_hwnd = None
+        best_score = -1
+
+        # Priority keywords: Real-time Screen > 3uAirPlayer > 3uTools
         def enum_cb(h, _):
-            nonlocal hwnd
+            nonlocal best_hwnd, best_score
             txt = win32gui.GetWindowText(h)
             if txt:
                 txt_lower = txt.lower()
-                for k in keywords:
-                    if k in txt_lower and "phim" not in txt_lower and "antigravity" not in txt_lower and "command prompt" not in txt_lower:
-                        hwnd = h
-                        return
+                if "phim" in txt_lower or "antigravity" in txt_lower or "command prompt" in txt_lower:
+                    return
+
+                score = -1
+                if "real-time" in txt_lower or "real time" in txt_lower or "thời gian thực" in txt_lower:
+                    score = 100
+                elif "airplayer" in txt_lower:
+                    score = 80
+                elif "3utools" in txt_lower:
+                    score = 50
+                elif "screen" in txt_lower or "màn hình" in txt_lower:
+                    score = 30
+
+                if score > best_score:
+                    best_score = score
+                    best_hwnd = h
+
         win32gui.EnumWindows(enum_cb, None)
-        return hwnd
+        
+        # Check if there is a child video canvas inside the main window
+        if best_hwnd:
+            children = []
+            def child_cb(ch, _):
+                ch_rect = win32gui.GetWindowRect(ch)
+                ch_w = ch_rect[2] - ch_rect[0]
+                ch_h = ch_rect[3] - ch_rect[0]
+                # Look for vertical video aspect ratio canvas
+                if ch_h > ch_w * 1.3 and ch_w > 100:
+                    children.append((ch, ch_w * ch_h))
+            win32gui.EnumChildWindows(best_hwnd, child_cb, None)
+            if children:
+                children.sort(key=lambda x: x[1], reverse=True)
+                return children[0][0]
+
+        return best_hwnd
 
     def _run_wda_stream(self):
         target_url = self.stream_url

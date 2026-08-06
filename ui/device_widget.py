@@ -122,19 +122,33 @@ class ScreenCanvas(QLabel):
                 pyautogui.dragTo(end_target_x, end_target_y, duration=0.3, button='left')
 
     def _find_3utools_window(self):
-        hwnd = None
-        keywords = ["real-time screen", "3uairplayer", "3utools", "iphone", "idevice", "screen"]
+        best_hwnd = None
+        best_score = -1
+
         def enum_cb(h, _):
-            nonlocal hwnd
+            nonlocal best_hwnd, best_score
             txt = win32gui.GetWindowText(h)
             if txt:
                 txt_lower = txt.lower()
-                for k in keywords:
-                    if k in txt_lower and "phim" not in txt_lower and "antigravity" not in txt_lower and "command prompt" not in txt_lower:
-                        hwnd = h
-                        return
+                if "phim" in txt_lower or "antigravity" in txt_lower or "command prompt" in txt_lower:
+                    return
+
+                score = -1
+                if "real-time" in txt_lower or "real time" in txt_lower or "thời gian thực" in txt_lower:
+                    score = 100
+                elif "airplayer" in txt_lower:
+                    score = 80
+                elif "3utools" in txt_lower:
+                    score = 50
+                elif "screen" in txt_lower or "màn hình" in txt_lower:
+                    score = 30
+
+                if score > best_score:
+                    best_score = score
+                    best_hwnd = h
+
         win32gui.EnumWindows(enum_cb, None)
-        return hwnd
+        return best_hwnd
 
     def keyPressEvent(self, event: QKeyEvent):
         text = event.text()

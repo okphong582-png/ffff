@@ -32,39 +32,37 @@ class PortForwarder:
         """
         logger.info(f"Starting port forward for device {self.udid}: local ports ({self.wda_port}->{self.remote_wda_port}, {self.mjpeg_port}->{self.remote_mjpeg_port})")
 
-        # 1. Try iproxy
-        success = self._start_iproxy()
+        # 1. Try tidevice relay (most reliable on Windows usbmuxd)
+        success = self._start_tidevice_relay()
         if not success:
             # 2. Try pymobiledevice3 forward
             success = self._start_pymd3_forward()
         if not success:
-            # 3. Try tidevice wdaproxy
-            success = self._start_tidevice_wdaproxy()
+            # 3. Try iproxy
+            success = self._start_iproxy()
 
         self._is_active = success
         return success
 
-    def _start_iproxy(self) -> bool:
+    def _start_tidevice_relay(self) -> bool:
         try:
-            # iproxy <local_port> <remote_port> -u <udid>
-            cmd1 = ["iproxy", str(self.wda_port), str(self.remote_wda_port), "-u", self.udid]
+            cmd1 = ["python", "-m", "tidevice", "-u", self.udid, "relay", str(self.wda_port), str(self.remote_wda_port)]
             p1 = subprocess.Popen(cmd1, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             self.procs.append(p1)
 
-            cmd2 = ["iproxy", str(self.mjpeg_port), str(self.remote_mjpeg_port), "-u", self.udid]
+            cmd2 = ["python", "-m", "tidevice", "-u", self.udid, "relay", str(self.mjpeg_port), str(self.remote_mjpeg_port)]
             p2 = subprocess.Popen(cmd2, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             self.procs.append(p2)
 
             time.sleep(1.0)
-            logger.info("iproxy processes started successfully.")
+            logger.info("tidevice relay processes started successfully.")
             return True
         except Exception as e:
-            logger.warning(f"iproxy notice: {e}")
+            logger.warning(f"tidevice relay notice: {e}")
             return False
 
     def _start_pymd3_forward(self) -> bool:
         try:
-            # pymobiledevice3 usbmux forward <local_port> <remote_port> --udid <udid>
             cmd1 = ["python", "-m", "pymobiledevice3", "usbmux", "forward", str(self.wda_port), str(self.remote_wda_port), "--udid", self.udid]
             p1 = subprocess.Popen(cmd1, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             self.procs.append(p1)
@@ -80,16 +78,21 @@ class PortForwarder:
             logger.warning(f"pymobiledevice3 forward notice: {e}")
             return False
 
-    def _start_tidevice_wdaproxy(self) -> bool:
+    def _start_iproxy(self) -> bool:
         try:
-            cmd = ["python", "-m", "tidevice", "-u", self.udid, "relay", str(self.wda_port), str(self.remote_wda_port)]
-            p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            self.procs.append(p)
+            cmd1 = ["iproxy", str(self.wda_port), str(self.remote_wda_port), "-u", self.udid]
+            p1 = subprocess.Popen(cmd1, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            self.procs.append(p1)
+
+            cmd2 = ["iproxy", str(self.mjpeg_port), str(self.remote_mjpeg_port), "-u", self.udid]
+            p2 = subprocess.Popen(cmd2, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            self.procs.append(p2)
+
             time.sleep(1.0)
-            logger.info("tidevice relay process started successfully.")
+            logger.info("iproxy processes started successfully.")
             return True
         except Exception as e:
-            logger.warning(f"tidevice relay notice: {e}")
+            logger.warning(f"iproxy notice: {e}")
             return False
 
     def stop_forwarding(self):

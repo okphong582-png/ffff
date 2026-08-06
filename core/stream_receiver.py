@@ -106,11 +106,16 @@ class StreamReceiverThread(QThread):
 
     def _find_3utools_window(self):
         hwnd = None
+        keywords = ["real-time screen", "3uairplayer", "3utools", "iphone", "idevice", "screen"]
         def enum_cb(h, _):
             nonlocal hwnd
             txt = win32gui.GetWindowText(h)
-            if "real-time screen" in txt.lower() or "3uairplayer" in txt.lower():
-                hwnd = h
+            if txt:
+                txt_lower = txt.lower()
+                for k in keywords:
+                    if k in txt_lower and "phim" not in txt_lower and "antigravity" not in txt_lower and "command prompt" not in txt_lower:
+                        hwnd = h
+                        return
         win32gui.EnumWindows(enum_cb, None)
         return hwnd
 

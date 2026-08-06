@@ -1,5 +1,6 @@
 import time
 import logging
+import ctypes
 import requests
 import numpy as np
 import cv2
@@ -76,10 +77,9 @@ class StreamReceiverThread(QThread):
                 saveBitMap.CreateCompatibleBitmap(mfcDC, w, h)
                 saveDC.SelectObject(saveBitMap)
 
-                # Try PrintWindow with PW_RENDERFULLCONTENT (captures background/covered windows)
-                result = win32gui.PrintWindow(hwnd, saveDC.GetSafeHdc(), PW_RENDERFULLCONTENT)
+                # Use ctypes PrintWindow (works on all Windows versions)
+                result = ctypes.windll.user32.PrintWindow(hwnd, saveDC.GetSafeHdc(), PW_RENDERFULLCONTENT)
                 if not result:
-                    # Fallback to BitBlt
                     saveDC.BitBlt((0, 0), (w, h), mfcDC, (0, 0), win32con.SRCCOPY)
 
                 bmpstr = saveBitMap.GetBitmapBits(True)
@@ -94,11 +94,10 @@ class StreamReceiverThread(QThread):
                 # Convert BGRA to RGB
                 frame_rgb = cv2.cvtColor(img, cv2.COLOR_BGRA2RGB)
 
-                # Check if frame is non-empty
-                if np.max(frame_rgb) > 0:
-                    bytes_per_line = 3 * w
-                    q_img = QImage(frame_rgb.data, w, h, bytes_per_line, QImage.Format_RGB888).copy()
-                    self.frame_ready.emit(q_img, w, h)
+                # Emit frame to UI
+                bytes_per_line = 3 * w
+                q_img = QImage(frame_rgb.data, w, h, bytes_per_line, QImage.Format_RGB888).copy()
+                self.frame_ready.emit(q_img, w, h)
 
                 frame_count += 1
                 now = time.time()

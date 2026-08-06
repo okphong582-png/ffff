@@ -27,18 +27,35 @@ class PortForwarder:
 
     def start_forwarding(self) -> bool:
         """
-        Starts forwarding local ports for WDA (8100) and MJPEG Stream (9100).
+        Starts forwarding local ports for WDA (8100) and MJPEG Stream (9100),
+        and automatically launches WDA test runner on iOS device.
         """
-        logger.info(f"Starting port forward for device {self.udid}: local ports {self.wda_port}, {self.mjpeg_port}")
+        logger.info(f"Starting port forward & WDA launcher for device {self.udid}: local ports {self.wda_port}, {self.mjpeg_port}")
 
-        # Attempt 1: Try using iproxy (part of libimobiledevice / tidevice)
-        success = self._start_iproxy()
+        # Attempt 1: Try using tidevice wdaproxy (Launches WDA app on iPhone + forwards ports automatically)
+        success = self._start_tidevice_wdaproxy()
         if not success:
-            # Attempt 2: Try pymobiledevice3 forwarding
+            # Attempt 2: Try iproxy (part of libimobiledevice)
+            success = self._start_iproxy()
+        if not success:
+            # Attempt 3: Try pymobiledevice3 forwarding
             success = self._start_pymd3_forward()
 
         self._is_active = success
         return success
+
+    def _start_tidevice_wdaproxy(self) -> bool:
+        try:
+            # tidevice wdaproxy automatically launches WDA app on iOS and forwards port
+            cmd = ["python", "-m", "tidevice", "-u", self.udid, "wdaproxy", "-B", "com.facebook.WebDriverAgentRunner.xctrunner", "--port", str(self.wda_port)]
+            p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            self.procs.append(p)
+            time.sleep(2.0)
+            logger.info("tidevice wdaproxy process started successfully.")
+            return True
+        except Exception as e:
+            logger.warning(f"tidevice wdaproxy launch notice: {e}")
+            return False
 
     def _start_iproxy(self) -> bool:
         try:

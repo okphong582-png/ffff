@@ -40,7 +40,7 @@ class StreamReceiverThread(QThread):
         # Attempt 2: WDA Stream HTTP Fallback
         self._run_wda_stream()
 
-    def _run_3utools_capture() -> bool:
+    def _run_3utools_capture(self) -> bool:
         """Captures 3uTools Real-time Screen window in real time."""
         hwnd = self._find_3utools_window()
         if not hwnd:

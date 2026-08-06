@@ -38,6 +38,16 @@ class PortForwarder:
         """Starts background thread with native UsbmuxTcpForwarder instances."""
         logger.info(f"Starting native UsbmuxTcpForwarder for device {self.udid}: local ({self.wda_port}->{self.remote_wda_port}, {self.mjpeg_port}->{self.remote_mjpeg_port})")
 
+        # Try launching tunneld for iOS 17/18 CoreDevice support
+        try:
+            cmd = ["python", "-m", "pymobiledevice3", "remote", "tunneld"]
+            p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            self.tunnel_proc = p
+            time.sleep(1.0)
+            logger.info("iOS 17/18 Tunneld process initiated.")
+        except Exception as e:
+            logger.debug(f"Tunneld launch notice: {e}")
+
         try:
             self.thread = threading.Thread(target=self._run_async_loop, daemon=True)
             self.thread.start()

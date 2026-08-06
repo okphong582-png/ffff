@@ -11,10 +11,13 @@ from PySide6.QtGui import QImage
 
 logger = logging.getLogger("StreamReceiver")
 
+# PW_RENDERFULLCONTENT flag for PrintWindow
+PW_RENDERFULLCONTENT = 2
+
 class StreamReceiverThread(QThread):
     """
-    Receives and decodes live screen frames from 3uTools Mirror Engine or WDA Stream.
-    Converts raw frames into PySide6 QImage and emits them for display at 60 FPS.
+    Receives and decodes live screen frames from 3uTools HD Mirror Engine or WDA Stream.
+    Converts raw frames into PySide6 QImage and emits them for display at high FPS.
     """
     frame_ready = Signal(QImage, int, int) # QImage frame, width, height
     fps_updated = Signal(float)            # Stream FPS count
@@ -33,7 +36,7 @@ class StreamReceiverThread(QThread):
     def run(self):
         logger.info("StreamReceiver started.")
 
-        # Attempt 1: 3uTools Real-time Screen Mirror Engine (Best for iOS 18)
+        # Attempt 1: 3uTools Real-time Screen HD Mirror Engine
         if self._run_3utools_capture():
             return
 
@@ -47,6 +50,11 @@ class StreamReceiverThread(QThread):
             return False
 
         logger.info(f"Found 3uTools Real-time Screen window handle: HWND {hwnd}")
+        
+        # Ensure window is restored if minimized
+        if win32gui.IsIconic(hwnd):
+            win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
+
         frame_count = 0
         last_fps_time = time.time()
 
@@ -68,7 +76,11 @@ class StreamReceiverThread(QThread):
                 saveBitMap.CreateCompatibleBitmap(mfcDC, w, h)
                 saveDC.SelectObject(saveBitMap)
 
-                saveDC.BitBlt((0, 0), (w, h), mfcDC, (0, 0), win32con.SRCCOPY)
+                # Try PrintWindow with PW_RENDERFULLCONTENT (captures background/covered windows)
+                result = win32gui.PrintWindow(hwnd, saveDC.GetSafeHdc(), PW_RENDERFULLCONTENT)
+                if not result:
+                    # Fallback to BitBlt
+                    saveDC.BitBlt((0, 0), (w, h), mfcDC, (0, 0), win32con.SRCCOPY)
 
                 bmpstr = saveBitMap.GetBitmapBits(True)
                 img = np.frombuffer(bmpstr, dtype=np.uint8)
@@ -81,10 +93,12 @@ class StreamReceiverThread(QThread):
 
                 # Convert BGRA to RGB
                 frame_rgb = cv2.cvtColor(img, cv2.COLOR_BGRA2RGB)
-                bytes_per_line = 3 * w
-                q_img = QImage(frame_rgb.data, w, h, bytes_per_line, QImage.Format_RGB888).copy()
 
-                self.frame_ready.emit(q_img, w, h)
+                # Check if frame is non-empty
+                if np.max(frame_rgb) > 0:
+                    bytes_per_line = 3 * w
+                    q_img = QImage(frame_rgb.data, w, h, bytes_per_line, QImage.Format_RGB888).copy()
+                    self.frame_ready.emit(q_img, w, h)
 
                 frame_count += 1
                 now = time.time()

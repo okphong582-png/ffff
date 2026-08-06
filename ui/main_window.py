@@ -24,8 +24,8 @@ class MainWindow(QMainWindow):
         self.setStyleSheet(DARK_THEME_QSS)
 
         self.device_widgets = {}  # udid -> DeviceWidget instance
-        self.next_wda_port = 8100
-        self.next_mjpeg_port = 9100
+        self.next_wda_port = 8200
+        self.next_mjpeg_port = 9200
 
         self.init_ui()
         self.init_monitor()

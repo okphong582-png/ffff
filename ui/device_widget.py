@@ -8,6 +8,7 @@ import pyautogui
 # Disable PyAutoGUI fail-safe to prevent corner cursor exceptions
 pyautogui.FAILSAFE = False
 pyautogui.PAUSE = 0.01
+
 from PySide6.QtCore import Qt, QPoint
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
@@ -66,25 +67,26 @@ class ScreenCanvas(QLabel):
             
             dx = abs(end_pos.x() - self.press_start_pos.x())
             dy = abs(end_pos.y() - self.press_start_pos.y())
+            is_click = (dx < 10 and dy < 10)
 
-            # Attempt 1: Try WDA tap/swipe if WDA is connected
+            # Attempt 1: WDA tap/swipe if WDA is connected
             if self.controller and self.controller.is_connected:
                 start_ios = self._map_to_ios_coords(self.press_start_pos)
                 end_ios = self._map_to_ios_coords(end_pos)
                 if start_ios and end_ios:
-                    if dx < 10 and dy < 10:
+                    if is_click:
                         self.controller.tap(start_ios[0], start_ios[1])
                     else:
                         self.controller.swipe(start_ios[0], start_ios[1], end_ios[0], end_ios[1], duration=max(0.2, min(1.5, duration)))
             else:
-                # Attempt 2: Dispatch mouse click/drag to 3uTools Real-time Screen Window
-                self._dispatch_to_3utools_window(self.press_start_pos, end_pos, is_click=(dx < 10 and dy < 10))
+                # Attempt 2: Dispatch mouse click/drag directly to 3uTools Real-time Screen Window
+                self._dispatch_to_3utools_window(self.press_start_pos, end_pos, is_click=is_click)
 
             self.press_start_pos = None
         super().mouseReleaseEvent(event)
 
     def _dispatch_to_3utools_window(self, start_pt: QPoint, end_pt: QPoint, is_click: bool):
-        """Dispatches mouse click or drag to 3uTools Real-time Screen window."""
+        """Dispatches mouse click or drag directly to iPhone screen canvas inside 3uTools window."""
         hwnd = self._find_3utools_window()
         if not hwnd:
             return
@@ -108,18 +110,29 @@ class ScreenCanvas(QLabel):
         rel_y = start_pt.y() - offset_y
 
         if 0 <= rel_x <= pm_w and 0 <= rel_y <= pm_h:
-            target_x = rect[0] + int((rel_x / pm_w) * win_w)
-            target_y = rect[1] + int((rel_y / pm_h) * win_h)
+            # Normalize click position on iPhone canvas (0.0 to 1.0)
+            norm_x = rel_x / pm_w
+            norm_y = rel_y / pm_h
+
+            # Map to exact iPhone screen bounds inside 3uTools Real-time Screen window:
+            # 3uTools has a left sidebar (~44% width) and top toolbar (~8% height).
+            # The phone screen is located at X: 45% -> 76%, Y: 8% -> 96%.
+            phone_screen_x = rect[0] + int(win_w * 0.46 + norm_x * (win_w * 0.30))
+            phone_screen_y = rect[1] + int(win_h * 0.08 + norm_y * (win_h * 0.88))
 
             if is_click:
-                pyautogui.click(target_x, target_y)
+                pyautogui.click(phone_screen_x, phone_screen_y)
             else:
                 end_rel_x = end_pt.x() - offset_x
                 end_rel_y = end_pt.y() - offset_y
-                end_target_x = rect[0] + int((end_rel_x / pm_w) * win_w)
-                end_target_y = rect[1] + int((end_rel_y / pm_h) * win_h)
-                pyautogui.moveTo(target_x, target_y)
-                pyautogui.dragTo(end_target_x, end_target_y, duration=0.3, button='left')
+                end_norm_x = max(0.0, min(1.0, end_rel_x / pm_w))
+                end_norm_y = max(0.0, min(1.0, end_rel_y / pm_h))
+
+                end_phone_x = rect[0] + int(win_w * 0.46 + end_norm_x * (win_w * 0.30))
+                end_phone_y = rect[1] + int(win_h * 0.08 + end_norm_y * (win_h * 0.88))
+
+                pyautogui.moveTo(phone_screen_x, phone_screen_y)
+                pyautogui.dragTo(end_phone_x, end_phone_y, duration=0.3, button='left')
 
     def _find_3utools_window(self):
         best_hwnd = None
